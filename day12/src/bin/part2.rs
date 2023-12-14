@@ -1,37 +1,113 @@
 use std::{
+    collections::HashMap,
     fs::File,
     io::{prelude::*, BufReader},
     path::Path,
 };
 
+
+// the soultion is strictly based on https://github.com/andypymont/advent2023-rust/blob/main/src/bin/12.rs
+// I was not able to solve it myself, but hey, i am learning
+
 use itertools::Itertools;
-use lazy_static::lazy_static;
-use regex::Regex;
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+enum Spring {
+    Unknown,
+    Hash,
+    Dot,
+}
+
+struct Analyzer {
+    springs: Vec<Spring>,
+    groups: Vec<usize>,
+}
+
+impl Analyzer {
+    fn possible_arrangements(&self) -> u64 {
+        let mut cache = HashMap::new();
+        self.arrangements(&mut cache, 0, 0)
+    }
+
+    fn arrangements(&self, cache: &mut HashMap<(usize, usize), u64>, spring_idx: usize, group_idx: usize) -> u64 {
+        if let Some(cached) = cache.get(&(spring_idx, group_idx)) {
+            return *cached;
+        }
+
+        let consumer_group = self.groups.get(group_idx).map_or(0, |group_len| {
+            if (spring_idx + group_len) > self.springs.len() {
+                return 0;
+            }
+
+            if (0..*group_len).any(|i| self.springs.get(spring_idx + i) == Some(&Spring::Dot)) {
+                return 0;
+            }
+
+            if self.springs.get(spring_idx + group_len) == Some(&Spring::Hash) {
+                return 0;
+            }
+
+            self.arrangements(cache, spring_idx + group_len + 1, group_idx + 1)
+        });
+
+        let skip = match self.springs.get(spring_idx) {
+            None => u64::from(group_idx >= self.groups.len()),
+            Some(&Spring::Hash) => 0,
+            Some(_) => self.arrangements(cache, spring_idx + 1, group_idx),
+        };
+
+        let arrangements = consumer_group + skip;
+        cache.insert((spring_idx, group_idx), arrangements);
+
+        arrangements
+    }
+
+}
 
 fn main() {
     let lines = lines_from_file("input.txt");
+    let repeat = 5;
 
     let springs = lines
         .iter()
         .map(|line| {
             let (spring_str, record_str) = line.split(" ").collect_tuple().unwrap();
 
-            let spring_str_five = vec![spring_str; 5].join("?");
-            let records_str_five = vec![record_str; 5].join(",");
+            let spring_str_repeated = vec![spring_str; repeat].join("?");
+            let records_str_repeated = vec![record_str; repeat].join(",");
 
-            let records = records_str_five
+            let records = records_str_repeated
                 .split(",")
-                .map(|r| r.parse::<i64>().unwrap())
+                .map(|r| r.parse::<usize>().unwrap())
                 .collect_vec();
-            (spring_str_five, records)
+
+            let springs = spring_str_repeated
+                .chars()
+                .map(|c| match c {
+                    '?' => Spring::Unknown,
+                    '#' => Spring::Hash,
+                    '.' => Spring::Dot,
+                    _ => panic!("Unknown char"),
+                })
+                .collect_vec();
+
+            (springs, records)
         })
         .collect_vec();
 
+    
 
     let mut sum = 0;
-    for (spring, records) in springs {
-        let cominations = find_right_combinations(spring.as_str(), &records);
-        println!("{}: {}", spring, cominations);
+    for ((spring, records), line) in springs.iter().zip(lines) {
+        let analyzer = Analyzer {
+            springs: spring.clone(),
+            groups: records.clone(),
+        };
+
+        let cominations = analyzer.possible_arrangements();
+
+        println!("{}: {}", line, cominations);
+        
         sum += cominations;
     }
 
@@ -44,104 +120,4 @@ fn lines_from_file(filename: impl AsRef<Path>) -> Vec<String> {
     buf.lines()
         .map(|l| l.expect("Could not parse line"))
         .collect()
-}
-
-lazy_static! {
-    static ref RE: Regex = Regex::new(r"#+").unwrap();
-}
-
-fn find_right_combinations(spring: &str, records: &Vec<i64>) -> i64 {
-    let unknowns = spring.chars().filter(|c| *c == '?').count();
-    let hashs = spring.chars().filter(|c| *c == '#').count();
-    let target = records.iter().sum::<i64>();
-
-    if target as i64 - hashs as i64 == 0 {
-        return 1;
-    }
-
-    let sub_springs = SubSpring::new(
-        spring.to_string(),
-        target as i64 - hashs as i64,
-        unknowns as i64,
-    );
-
-    let mut right_combinations = 0;
-
-    for sub_spring in sub_springs {
-        if verify_spring(&sub_spring, records) {
-            right_combinations += 1;
-        }
-    }
-
-    right_combinations
-}
-
-fn verify_spring(spring: &str, records: &Vec<i64>) -> bool {
-    let mut i = 0;
-
-    for m in RE.find_iter(spring) {
-        if records.len() <= i {
-            return false;
-        }
-
-        if records[i] != m.len() as i64 {
-            return false;
-        }
-        i += 1;
-    }
-
-    true
-}
-
-struct SubSpring {
-    spring: String,
-    current_subset: i64,
-    set_size: i64,
-}
-
-impl SubSpring {
-    fn new(spring: String, combinations: i64, set_size: i64) -> Self {
-        Self {
-            spring,
-            current_subset: (1 << combinations) - 1,
-            set_size,
-        }
-    }
-}
-
-impl Iterator for SubSpring {
-    type Item = String;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.current_subset & 1 << self.set_size != 0 && self.current_subset != 0 {
-            return None;
-        }
-
-        let mut q_counter = -1;
-
-        let next_spring = self
-            .spring
-            .chars()
-            .map(|c| {
-                if c == '?' {
-                    q_counter += 1;
-                    if self.current_subset & (1 << q_counter) == 0 {
-                        return '.';
-                    } else {
-                        return '#';
-                    }
-                }
-                return c;
-            })
-            .collect();
-
-        let lo = self.current_subset & !(self.current_subset - 1);
-        let lz = (self.current_subset + lo) & !self.current_subset;
-
-        self.current_subset |= lz;
-        self.current_subset &= !(lz - 1);
-        self.current_subset |= (lz / lo / 2) - 1;
-
-        Some(next_spring)
-    }
 }
