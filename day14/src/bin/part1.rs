@@ -37,8 +37,6 @@ fn main() {
         lines.iter().map(|line| line.chars().nth(idx).unwrap()).collect::<String>()
     }).collect::<Vec<String>>();
 
-    
-
     let mut sum = 0;
 
     for column in columns {
